@@ -1,3 +1,4 @@
+import { service } from '@loopback/core';
 import {
   Count,
   CountSchema,
@@ -16,15 +17,48 @@ import {
   del,
   requestBody,
   response,
+  HttpErrors,
 } from '@loopback/rest';
-import {Persona} from '../models';
+import { Llaves } from '../config/llaves';
+import {Credenciales, Persona} from '../models';
 import {PersonaRepository} from '../repositories';
-
+import { AutenticacionService } from '../services';
+const fetch = require("node-fetch");
 export class PersonaController {
   constructor(
+    @service(AutenticacionService)
+    public servicioAutenticacion: AutenticacionService,
     @repository(PersonaRepository)
     public personaRepository : PersonaRepository,
   ) {}
+
+  @post("/IdentificarPersona", {
+    responses:{
+      "200":{
+        description: "Identificación de usuarios"
+      }
+    }
+  })
+  async IdentificarPersona(
+    @requestBody()  credenciales: Credenciales
+  ){
+    let p = await this.servicioAutenticacion.identificarPersona(credenciales.usuario, credenciales.clave);
+    if(p){
+      let token = this.servicioAutenticacion.GenerarTokenJWT(p);
+      return{
+        datos:{
+          nombre: p.Nombres, 
+          correo: p.correo,
+          id: p.id
+        },
+        tk: token
+      }
+
+    }else{
+      throw new  HttpErrors[401]("Datos Invalidos");
+    }
+  }
+
 
   @post('/personas')
   @response(200, {
@@ -44,7 +78,20 @@ export class PersonaController {
     })
     persona: Omit<Persona, 'id'>,
   ): Promise<Persona> {
-    return this.personaRepository.create(persona);
+   let clave = this.servicioAutenticacion.Generarclave();
+   let claveCifrada = this.servicioAutenticacion.CifrarClave(clave);
+   persona.Clave = claveCifrada;
+   let p = await this.personaRepository.create(persona);
+
+    //NOTIFICAR AL USUARIO
+    let destino = persona.correo;
+    let asunto = "Registro en la plataforma"
+    let contenido = `Hola ${persona.Nombres}, su nombre de usuario es ${persona.correo}, y su contraseña es ${clave}`
+    fetch(`${Llaves.urlServicioNotificaciones}/envio-correo?correo_electronico=${destino}&asunto=${asunto}&contenido=${contenido}`)
+    .then((data:any) => {
+        console.log(data)
+    })
+    return p;
   }
 
   @get('/personas/count')
@@ -55,6 +102,8 @@ export class PersonaController {
   async count(
     @param.where(Persona) where?: Where<Persona>,
   ): Promise<Count> {
+
+
     return this.personaRepository.count(where);
   }
 
